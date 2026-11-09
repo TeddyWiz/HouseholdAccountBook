@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>가계부 월 보고서</title>
+<style>
+@page { size: A4 landscape; margin: 12mm 10mm; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 11px/1.4 "Malgun Gothic", "Pretendard", "Apple SD Gothic Neo", sans-serif; color: #111; background: #f4f4f2; }
+.toolbar { position: sticky; top: 0; background: #fff; border-bottom: 1px solid #ddd; padding: 10px 16px; display: flex; gap: 10px; align-items: center; z-index: 2; }
+.toolbar select, .toolbar button { font: inherit; font-size: 13px; padding: 5px 10px; border: 1px solid #ccc; border-radius: 6px; background: #fff; }
+.toolbar button.primary { background: #2a78d6; color: #fff; border-color: #2a78d6; }
+.toolbar .hint { color: #777; font-size: 12px; }
+.sheet { background: #fff; max-width: 287mm; margin: 16px auto; padding: 10mm; box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+h1 { font-size: 20px; margin: 0 0 2px; }
+.sub { color: #666; margin-bottom: 12px; }
+h2 { font-size: 13px; margin: 16px 0 6px; padding-bottom: 3px; border-bottom: 2px solid #111; }
+h3 { font-size: 12px; margin: 12px 0 4px; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.tile { border: 1px solid #ccc; border-radius: 6px; padding: 8px 10px; }
+.tile .l { color: #555; } .tile .v { font-size: 17px; font-weight: 700; } .tile .s { color: #888; font-size: 10px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: 1px solid #e3e3e3; padding: 3px 5px; text-align: left; vertical-align: top; }
+th { background: #f3f3f1; font-weight: 600; border-bottom: 1px solid #bbb; white-space: nowrap; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.d { white-space: nowrap; }
+tr.sum td { font-weight: 700; border-top: 1px solid #999; background: #fafaf8; }
+tr.internal td { color: #999; }
+.neg { color: #c62828; }
+.in { color: #1c5cab; font-weight: 600; }
+.memo { color: #6a4c00; }
+.hint2 { color: #888; font-size: 9.5px; }
+.empty { color: #999; padding: 8px 0; }
+thead { display: table-header-group; }
+tr { page-break-inside: avoid; }
+@media print {
+  body { background: #fff; }
+  .toolbar { display: none; }
+  .sheet { box-shadow: none; margin: 0; padding: 0; max-width: none; }
+  h2 { page-break-after: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <b>월 보고서</b>
+  <select id="month"></select>
+  <label><input type="checkbox" id="internal"> 내 계좌 간 이체 포함</label>
+  <button class="primary" onclick="window.print()">인쇄 / PDF 저장</button>
+  <span class="hint">인쇄 창에서 프린터를 “PDF로 저장”(또는 Microsoft Print to PDF)으로 고르면 PDF 파일이 됩니다.</span>
+</div>
+<div class="sheet" id="sheet"><div class="empty">불러오는 중…</div></div>
+<script>
+const $ = s => document.querySelector(s);
+const won = n => (n == null || n === '') ? '' : Number(n).toLocaleString('ko-KR');
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const params = new URLSearchParams(location.search);
+
+async function load() {
+  const months = (await (await fetch('/api/overview')).json()).months;
+  const month = params.get('month') || months[0];
+  $('#month').innerHTML = months.map(m => `<option ${m === month ? 'selected' : ''}>${m}</option>`).join('');
+  $('#internal').checked = params.get('internal') === '1';
+  const d = await (await fetch(`/api/report?month=${month}${$('#internal').checked ? '&internal=1' : ''}`)).json();
+  document.title = `가계부 ${d.month} 보고서`;
+  const s = d.summary, net = s.net;
+  const bankRows = d.bank.map(r => `<tr class="${r.internal ? 'internal' : ''}">
+      <td class="d">${r.date.slice(5)} ${esc(r.time.slice(0,5))}</td><td class="d">${esc(r.account)}</td>
+      <td class="n">${r.out ? won(r.out) : ''}</td><td class="n in">${r.in ? won(r.in) : (!r.out ? '<span class="hint2">0</span>' : '')}</td>
+      <td>${esc(r.counter_name)}</td><td>${esc(r.txn_type)}</td>
+      <td>${esc(r.detail)}${r.internal ? ' [내부이체]' : ''}${r.card_company ? ` [${esc(r.card_company)} 결제]` : ''}${r.memo ? ' · ' + esc(r.memo) : ''}</td>
+      <td class="memo">${esc(r.note)}</td><td class="n ${r.balance < 0 ? 'neg' : ''}">${won(r.balance)}</td></tr>`).join('');
+  const outSum = d.bank.reduce((a, r) => a + (r.out || 0), 0), inSum = d.bank.reduce((a, r) => a + (r.in || 0), 0);
+  // 청구금액: 첫 청구 금액 + 청구월, 할부는 알려진 회차별 청구를 함께
+  const mm = m => `${Number(m.slice(5))}월`;
+  const billCell = r => {
+    if (!r.billed.length) return ['<span class="hint2">미청구/자료 없음</span>', ''];
+    const f = r.billed[0];
+    const more = r.billed.slice(1).map(b => `${mm(b.month)} ${won(b.amount)}`).join(', ');
+    return [f.amount == null ? '<span class="hint2">금액 미확인</span>' : won(f.amount), `${mm(f.month)}${f.round ? ` (${f.round}회차)` : ''}${more ? `<div class="hint2">이후 ${more}</div>` : ''}`];
+  };
+  const billsHtml = (d.bills || []).length ? `<h3>이번 달 카드대금 청구(결제) 금액</h3>
+    <table><thead><tr><th>카드사</th><th>청구월</th><th class="n">명세서 합계</th><th class="n">통장 출금액</th><th>비고</th></tr></thead><tbody>
+    ${d.bills.map(b => `<tr><td>${esc(b.company)}</td><td>${b.bill_month}</td><td class="n">${won(b.total)}</td>
+      <td class="n">${b.paid == null ? '' : won(b.paid)}</td>
+      <td>${b.exact ? '명세서 자료' : '승인내역으로 추정'}${b.paid != null && b.paid !== b.total ? ` · 차이 ${won(b.paid - b.total)}` : ''}</td></tr>`).join('')}
+    <tr class="sum"><td colspan="2">합계</td><td class="n">${won(d.bills.reduce((a, b) => a + (b.total || 0), 0))}</td>
+      <td class="n">${won(d.bills.reduce((a, b) => a + (b.paid || 0), 0))}</td><td></td></tr></tbody></table>` : '';
+  const cardHtml = billsHtml + (d.cards.map(g => `<h3>${esc(g.card)} — ${g.rows.length}건, 이용 ${won(g.total)}원 · 청구 ${won(g.billed_total)}원</h3>
+    <table><thead><tr><th>이용일</th><th>이용가맹점</th><th class="n">이용금액</th><th>할부</th><th class="n">청구금액</th><th>청구월</th><th>구분</th><th>메모</th></tr></thead><tbody>
+    ${g.rows.map(r => { const [ba, bm] = billCell(r); return `<tr><td class="d">${r.date.slice(5)}</td><td>${esc(r.merchant)}</td>
+      <td class="n ${r.out < 0 ? 'neg' : ''}">${won(r.out)}</td>
+      <td>${r.inst_months ? `${r.inst_months}개월${r.inst_remain != null ? ` / ${r.inst_remain}개월 남음` : ''}` : ''}</td>
+      <td class="n">${ba}</td><td class="d">${bm}</td>
+      <td>${esc(r.txn_type)}${r.status ? ' ' + esc(r.status) : ''}</td><td class="memo">${esc(r.note)}</td></tr>`; }).join('')}
+    <tr class="sum"><td colspan="2">소계</td><td class="n">${won(g.total)}</td><td></td><td class="n">${won(g.billed_total)}</td><td colspan="3"></td></tr></tbody></table>`).join('')
+    || '<div class="empty">이 달의 카드 사용내역이 없습니다.</div>');
+  $('#sheet').innerHTML = `
+    <h1>가계부 ${d.month.replace('-', '년 ')}월 보고서</h1>
+    <div class="sub">출력일 ${new Date().toLocaleDateString('ko-KR')} · 수입·지출은 통장 기준(내 계좌 간 이체 제외), 카드 사용액은 사용일 기준 참고값</div>
+    <h2>월 요약</h2>
+    <div class="tiles">
+      <div class="tile"><div class="l">수입</div><div class="v">${won(s.income)}원</div><div class="s">내 계좌 간 이체 제외</div></div>
+      <div class="tile"><div class="l">지출</div><div class="v">${won(s.expense)}원</div><div class="s">카드대금 결제 ${won(s.card_paid)}원 포함</div></div>
+      <div class="tile"><div class="l">수입 − 지출</div><div class="v ${net < 0 ? 'neg' : ''}">${net > 0 ? '+' : ''}${won(net)}원</div><div class="s">내부이체 ${s.internal_count}건 (${won(s.internal_amount)}원) 제외</div></div>
+      <div class="tile"><div class="l">카드 사용액 (사용일 기준)</div><div class="v">${won(s.card_usage)}원</div><div class="s">${s.card_count}건 · 참고용</div></div>
+    </div>
+    <h2>계좌별 잔액 (${d.month_end} 기준)</h2>
+    <table><thead><tr><th>은행</th><th>계좌</th><th>이름</th><th>기준 시각</th><th class="n">잔액</th></tr></thead><tbody>
+      ${d.balances.map(b => `<tr><td>${esc(b.institution)}</td><td>${esc(b.number)}</td><td>${esc(b.name)}</td><td>${esc(b.as_of)}</td>
+        <td class="n ${b.balance < 0 ? 'neg' : ''}">${won(b.balance)}</td></tr>`).join('')}
+      <tr class="sum"><td colspan="4">총합 (마이너스 통장 포함)</td><td class="n ${d.balance_total < 0 ? 'neg' : ''}">${won(d.balance_total)}</td></tr>
+    </tbody></table>
+    <h2>통장 거래내역 (${d.bank.length}건${$('#internal').checked ? ', 내 계좌 간 이체 포함' : ', 내 계좌 간 이체 제외'})</h2>
+    ${d.bank.length ? `<table><thead><tr><th>날짜</th><th>계좌</th><th class="n">지출</th><th class="n">입금</th><th>상대 예금주</th><th>거래구분</th><th>상세내역</th><th>메모</th><th class="n">잔액</th></tr></thead>
+      <tbody>${bankRows}<tr class="sum"><td colspan="2">합계</td><td class="n">${won(outSum)}</td><td class="n">${won(inSum)}</td><td colspan="5"></td></tr></tbody></table>` : '<div class="empty">거래 없음</div>'}
+    <h2>카드 (사용일 기준 사용내역 · 청구금액)</h2>
+    ${cardHtml}`;
+}
+$('#month').onchange = e => { params.set('month', e.target.value); history.replaceState(null, '', '?' + params); load(); };
+$('#internal').onchange = e => { e.target.checked ? params.set('internal', '1') : params.delete('internal'); history.replaceState(null, '', '?' + params); load(); };
+load();
+</script>
+</body>
+</html>

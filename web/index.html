@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>가계부</title>
+<style>
+:root{
+  --bg:#f4f4f2; --surface:#fcfcfb; --line:#e3e2de; --ink:#0b0b0b; --ink2:#52514e; --ink3:#8a8984;
+  --income:#2a78d6; --expense:#eb6834; --neg:#d03b3b; --accent:#2a78d6; --chip:#efeeea;
+  --radius:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#121211; --surface:#1a1a19; --line:#2e2e2c; --ink:#f0efec; --ink2:#c3c2b7; --ink3:#8d8c85;
+    --income:#3987e5; --expense:#d95926; --neg:#e66767; --accent:#3987e5; --chip:#262624; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 "Pretendard","Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--surface);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:12px;padding:10px 20px;flex-wrap:wrap}
+header h1{font-size:18px;margin:0 12px 0 0;letter-spacing:-.02em}
+.month-nav{display:flex;align-items:center;gap:4px}
+.month-nav select{font-size:15px;font-weight:600;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:6px 12px}
+button:hover{border-color:var(--ink3)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.spacer{flex:1}
+main{padding:16px 20px 40px;max-width:1700px;margin:0 auto}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px}
+.tile .label{color:var(--ink2);font-size:13px;display:flex;align-items:center;gap:6px}
+.tile .value{font-size:24px;font-weight:700;letter-spacing:-.02em;margin-top:4px;font-variant-numeric:tabular-nums}
+.tile .sub{color:var(--ink3);font-size:12px;margin-top:2px}
+.dot{width:9px;height:9px;border-radius:3px;display:inline-block}
+.section-title{font-size:13px;color:var(--ink2);margin:18px 0 8px;font-weight:600}
+.balances{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px}
+.bal{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:10px 14px;min-width:190px;cursor:pointer}
+.bal.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.bal .n{color:var(--ink2);font-size:12px}
+.bal .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+.bal .t{color:var(--ink3);font-size:11px}
+.bal.total{margin-left:auto;cursor:default;background:var(--chip);border-color:var(--ink3);min-width:210px;position:sticky;right:0;box-shadow:-8px 0 12px var(--bg)}
+.bal.total .v{font-size:19px}
+.neg{color:var(--neg)}
+.chart-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px;position:relative}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--ink2)}
+.legend span{display:flex;align-items:center;gap:5px}
+#chart svg{display:block;width:100%;height:190px}
+#chart .bar{cursor:pointer}
+#tip{position:absolute;pointer-events:none;background:var(--surface);border:1px solid var(--line);border-radius:8px;
+  padding:7px 10px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.12);display:none;white-space:nowrap}
+.filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:18px 0 8px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:6px 12px}
+.seg button.on{background:var(--ink);color:var(--surface)}
+.filters select,.filters input[type=search]{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+.filters label{display:flex;align-items:center;gap:5px;color:var(--ink2)}
+.count{color:var(--ink3);font-size:12px}
+.table-wrap{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:auto;max-height:70vh}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{position:sticky;top:0;background:var(--surface);text-align:left;font-weight:600;color:var(--ink2);border-bottom:1px solid var(--line);padding:8px;white-space:nowrap;z-index:1}
+td{border-bottom:1px solid var(--line);padding:6px 8px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+tr.internal td{color:var(--ink3)}
+tr.card td{background:color-mix(in srgb,var(--chip) 45%,transparent)}
+.tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:5px;background:var(--chip);color:var(--ink2);margin-left:4px}
+input.note{font:inherit;font-size:12.5px;width:170px;padding:3px 6px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--ink)}
+input.note:hover{border-color:var(--line)}
+input.note:focus{outline:none;border-color:var(--accent);background:var(--surface)}
+input.note::placeholder{color:var(--ink3)}
+input.note.saved{border-color:var(--income)}
+td.notecell{max-width:none;overflow:visible}
+.paylink{color:var(--accent);text-decoration:underline;text-underline-offset:2px;cursor:pointer;font-weight:600;background:none;border:0;padding:0}
+.out{color:var(--ink)} .in{color:var(--income);font-weight:600}
+.zero{color:var(--ink3);font-weight:400}
+dialog{border:1px solid var(--line);border-radius:12px;padding:0;background:var(--surface);color:var(--ink);max-width:95vw;width:1150px}
+dialog::backdrop{background:rgba(0,0,0,.35)}
+.dlg-h{display:flex;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+.dlg-h h2{font-size:16px;margin:0;flex:1}
+.dlg-b{padding:14px 18px;max-height:72vh;overflow:auto}
+.kv{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px;color:var(--ink2)}
+.kv b{color:var(--ink)}
+.drop{border:2px dashed var(--line);border-radius:10px;padding:26px;text-align:center;color:var(--ink2)}
+.drop.over{border-color:var(--accent);color:var(--accent)}
+.form-row{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.form-row input,.form-row select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink)}
+.result{margin-top:12px;font-size:13px}
+.result div{padding:4px 0;border-bottom:1px solid var(--line)}
+.st-ok{color:var(--income)} .st-err{color:var(--neg)} .st-skip{color:var(--ink3)}
+.empty{padding:30px;text-align:center;color:var(--ink3)}
+@media (max-width:760px){ .tiles{grid-template-columns:repeat(2,1fr)} main{padding:12px} header{padding:8px 12px} }
+</style>
+</head>
+<body>
+<header>
+  <h1>가계부</h1>
+  <div class="month-nav">
+    <button id="prevM" title="이전 달">◀</button>
+    <select id="month"></select>
+    <button id="nextM" title="다음 달">▶</button>
+  </div>
+  <div class="spacer"></div>
+  <button id="btnReport" title="선택한 달의 요약·잔액·거래내역을 인쇄하거나 PDF로 저장">월 보고서 인쇄/PDF</button>
+  <button id="btnSources">소스</button>
+  <button id="btnImport" class="primary">데이터 입력</button>
+</header>
+
+<main>
+  <div class="tiles">
+    <div class="tile"><div class="label"><i class="dot" style="background:var(--income)"></i>이번 달 수입</div>
+      <div class="value" id="tIncome">-</div><div class="sub">내 계좌 간 이체 제외</div></div>
+    <div class="tile"><div class="label"><i class="dot" style="background:var(--expense)"></i>이번 달 지출</div>
+      <div class="value" id="tExpense">-</div><div class="sub" id="tExpenseSub"></div></div>
+    <div class="tile"><div class="label">수입 − 지출</div>
+      <div class="value" id="tNet">-</div><div class="sub" id="tInternal"></div></div>
+    <div class="tile"><div class="label">카드 사용액 (사용일 기준)</div>
+      <div class="value" id="tCard">-</div><div class="sub" id="tCardSub"></div></div>
+  </div>
+
+  <div class="section-title">계좌별 잔액 <span class="count">(클릭하면 해당 계좌만 보기)</span></div>
+  <div class="balances" id="balances"></div>
+
+  <div class="section-title">월별 수입·지출 (최근 12개월, 막대를 누르면 그 달로 이동)</div>
+  <div class="chart-card">
+    <div class="legend"><span><i class="dot" style="background:var(--income)"></i>수입</span><span><i class="dot" style="background:var(--expense)"></i>지출</span></div>
+    <div id="chart"></div>
+    <div id="tip"></div>
+  </div>
+
+  <div class="filters">
+    <div class="seg" id="view">
+      <button data-v="bank" class="on">통장</button><button data-v="card">카드</button><button data-v="all">전체</button>
+    </div>
+    <select id="account"><option value="">모든 계좌/카드</option></select>
+    <label><input type="checkbox" id="internal"> 내 계좌 간 이체 표시</label>
+    <input type="search" id="q" placeholder="검색 (내용·가맹점·예금주·메시지·메모)">
+    <span class="count" id="count"></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>날짜</th><th>시간</th><th>계좌/카드번호</th><th class="num">지출금액</th><th class="num">입금금액</th>
+        <th>상대계좌번호</th><th>상대계좌예금주명</th><th>송금메시지</th><th>거래구분</th><th>이용가맹점</th>
+        <th>할부(개월/남은)</th><th>상세내역</th><th>메모 (직접 입력)</th><th class="num">잔액</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+
+<!-- 카드 상세 -->
+<dialog id="dlgCard"><div class="dlg-h"><h2 id="cardTitle">카드 사용 내역</h2><button data-close>닫기</button></div>
+  <div class="dlg-b"><div class="kv" id="cardInfo"></div>
+    <table><thead><tr><th>이용일</th><th>시간</th><th>카드</th><th>이용가맹점</th><th class="num">이용금액</th>
+      <th>할부(개월/회차/남은)</th><th class="num">이번 청구액</th><th>구분</th><th>비고</th><th>메모 (직접 입력)</th></tr></thead>
+      <tbody id="cardRows"></tbody></table></div></dialog>
+
+<!-- 데이터 입력 -->
+<dialog id="dlgImport"><div class="dlg-h"><h2>데이터 입력</h2><button data-close>닫기</button></div>
+  <div class="dlg-b">
+    <div class="drop" id="drop">은행 거래내역(엑셀·HTML) 또는 카드 명세서(엑셀·PDF) 파일을 여기로 끌어 놓거나
+      <br><br><input type="file" id="files" multiple accept=".xls,.xlsx,.html,.htm,.pdf"></div>
+    <div class="form-row">
+      <label>계좌 지정(계좌번호 없는 파일용) <select id="impAccount"><option value="">자동</option></select></label>
+      <label>PDF 암호 <input type="password" id="impPw" placeholder="예: 생년월일 6자리" size="14"></label>
+      <button class="primary" id="impGo">가져오기</button>
+    </div>
+    <div class="result" id="impResult"></div>
+    <p class="count">이미 들어간 거래는 자동으로 건너뜁니다. 올린 파일은 DataSource 폴더(Bank/Card)에도 보관됩니다.</p>
+  </div></dialog>
+
+<!-- 소스 -->
+<dialog id="dlgSources"><div class="dlg-h"><h2>소스 · 보유 계좌와 카드</h2><button data-close>닫기</button></div>
+  <div class="dlg-b" id="srcBody"></div></dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const won = n => (n == null || n === '') ? '' : Number(n).toLocaleString('ko-KR');
+const wonU = n => won(n) + '원';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const state = { month:'', months:[], view:'bank', account:'', internal:false, q:'' };
+async function api(url, opt){ const r = await fetch(url, opt); return r.json(); }
+
+async function loadOverview(){
+  const d = await api('/api/overview' + (state.month ? '?month=' + state.month : ''));
+  state.months = d.months; state.month = d.month;
+  $('#month').innerHTML = d.months.map(m => `<option ${m===d.month?'selected':''}>${m}</option>`).join('');
+  const s = d.summary || {};
+  $('#tIncome').textContent = wonU(s.income||0);
+  $('#tExpense').textContent = wonU(s.expense||0);
+  $('#tExpenseSub').textContent = s.card_paid ? `카드대금 결제 ${wonU(s.card_paid)} 포함` : '내 계좌 간 이체 제외';
+  const net = (s.net||0);
+  $('#tNet').textContent = (net>0?'+':'') + wonU(net); $('#tNet').className = 'value' + (net<0?' neg':'');
+  $('#tInternal').textContent = s.internal_count ? `내 계좌 간 이체 ${s.internal_count}건 (${wonU(s.internal_amount)}) 제외` : '';
+  $('#tCard').textContent = wonU(s.card_usage||0);
+  $('#tCardSub').textContent = `${s.card_count||0}건 · 참고용(지출 합계에는 통장 결제액으로 반영)`;
+  $('#balances').innerHTML = d.balances.map(b => `<div class="bal ${String(b.id)===state.account?'active':''}" data-id="${b.id}">
+      <div class="n">${esc(b.institution)} · ${esc(b.number)}</div>
+      <div class="v ${b.balance<0?'neg':''}">${wonU(b.balance)}</div><div class="t">${esc(b.name)} · ${esc(b.as_of)} 기준</div></div>`).join('')
+    + (d.balances.length ? `<div class="bal total" title="모든 계좌 잔액의 합 (마이너스 통장 포함)"><div class="n">계좌별 잔액 총합 · ${d.balances.length}개</div>
+      <div class="v ${d.balance_total<0?'neg':''}">${wonU(d.balance_total)}</div><div class="t">마이너스 통장 포함</div></div>` : '')
+    || '<div class="count">아직 데이터가 없습니다. 오른쪽 위 “데이터 입력”으로 파일을 넣어 주세요.</div>';
+  document.querySelectorAll('.bal[data-id]').forEach(el => el.onclick = () => {
+    state.account = state.account === el.dataset.id ? '' : el.dataset.id;
+    if (state.account && state.view === 'card') setView('bank');
+    $('#account').value = state.account; loadOverview(); loadRows(); });
+  const opts = ['<option value="">모든 계좌/카드</option>'];
+  const src = await api('/api/sources');
+  src.accounts.forEach(a => opts.push(`<option value="${a.id}">${a.kind==='bank'?'🏦':'💳'} ${esc(a.name)} ${esc(a.number)}</option>`));
+  $('#account').innerHTML = opts.join(''); $('#account').value = state.account;
+  $('#impAccount').innerHTML = '<option value="">자동</option>' + d.bank_accounts.map(a => `<option value="${esc(a.number)}">${esc(a.institution)} ${esc(a.number)}</option>`).join('');
+  drawChart(d.trend);
+}
+
+function drawChart(trend){
+  const el = $('#chart');
+  if (!trend.length){ el.innerHTML = '<div class="empty">데이터 없음</div>'; return; }
+  const W = el.clientWidth || 800, H = 190, pl = 56, pb = 22, pt = 8;
+  const max = Math.max(1, ...trend.flatMap(t => [t.income, t.expense]));
+  const step = Math.pow(10, Math.floor(Math.log10(max))); const nice = Math.ceil(max/step)*step;
+  const y = v => pt + (H-pt-pb) * (1 - v/nice);
+  const gw = (W-pl)/trend.length, bw = Math.max(4, Math.min(22, gw*0.32));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="월별 수입 지출 막대그래프">`;
+  for (let i=0;i<=4;i++){ const v = nice*i/4, yy = y(v);
+    svg += `<line x1="${pl}" x2="${W}" y1="${yy}" y2="${yy}" stroke="var(--line)" stroke-width="1"/>`;
+    svg += `<text x="${pl-6}" y="${yy+4}" text-anchor="end" font-size="11" fill="var(--ink3)">${v>=1e6? (v/1e6).toFixed(v%1e6?1:0)+'백만' : won(v)}</text>`; }
+  trend.forEach((t,i) => {
+    const cx = pl + gw*i + gw/2, sel = t.m === state.month;
+    const bar = (x, v, c) => { const yy = y(v), h = Math.max(0, H-pb-yy);
+      return `<path d="M${x},${H-pb} V${yy+Math.min(4,h)} q0,-4 4,-4 h${bw-8} q4,0 4,4 V${H-pb} Z" fill="${c}" opacity="${sel?1:.78}"/>`; };
+    svg += `<g class="bar" data-i="${i}">` +
+      `<rect x="${cx-gw/2}" y="${pt}" width="${gw}" height="${H-pt}" fill="transparent"/>` +
+      bar(cx-bw-1, t.income, 'var(--income)') + bar(cx+1, t.expense, 'var(--expense)') +
+      `<text x="${cx}" y="${H-6}" text-anchor="middle" font-size="11" fill="${sel?'var(--ink)':'var(--ink3)'}" font-weight="${sel?700:400}">${t.m.slice(2).replace('-','.')}</text></g>`;
+  });
+  el.innerHTML = svg + '</svg>';
+  const tip = $('#tip');
+  el.querySelectorAll('.bar').forEach(g => {
+    const t = trend[g.dataset.i];
+    g.onmousemove = e => { const r = el.parentElement.getBoundingClientRect();
+      tip.innerHTML = `<b>${t.m}</b><br><i class="dot" style="background:var(--income)"></i> 수입 ${wonU(t.income)}<br><i class="dot" style="background:var(--expense)"></i> 지출 ${wonU(t.expense)}<br>차액 ${wonU(t.income-t.expense)}`;
+      tip.style.display='block'; tip.style.left = Math.min(e.clientX-r.left+12, r.width-180)+'px'; tip.style.top = (e.clientY-r.top+12)+'px'; };
+    g.onmouseleave = () => tip.style.display='none';
+    g.onclick = () => { state.month = t.m; loadOverview(); loadRows(); };
+  });
+}
+
+async function loadRows(){
+  const p = new URLSearchParams({month: state.month, view: state.view, internal: state.internal?'1':'0', account: state.account, q: state.q});
+  const d = await api('/api/transactions?' + p);
+  $('#count').textContent = `${d.rows.length}건`;
+  if (!d.rows.length){ $('#rows').innerHTML = '<tr><td colspan="14" class="empty">이 조건에 맞는 거래가 없습니다.</td></tr>'; return; }
+  $('#rows').innerHTML = d.rows.map(r => {
+    const outCell = r.out ? (r.card_company ? `<button class="paylink" data-id="${r.id}" title="카드 사용내역 보기">${won(r.out)}</button>` : won(r.out)) : '';
+    const inst = r.inst_months ? `${r.inst_months}개월 / ${r.inst_remain==null?'?':r.inst_remain+'개월 남음'}` : '';
+    const tags = (r.internal?'<span class="tag">내부이체</span>':'') + (r.card_company?`<span class="tag">${esc(r.card_company)} 결제</span>`:'') + (r.status?`<span class="tag">${esc(r.status)}</span>`:'');
+    return `<tr class="${r.internal?'internal':''} ${r.kind==='card'?'card':''}">
+      <td>${r.date}</td><td>${esc(r.time)}</td><td title="${esc(r.account_name)}">${r.kind==='card'?'💳 ':''}${esc(r.account)}</td>
+      <td class="num out">${outCell}</td><td class="num in">${r.in ? won(r.in) : (!r.out && r.kind === 'bank' ? '<span class="zero" title="원본 자료에 0원으로 기록된 거래">0</span>' : '')}</td>
+      <td>${esc(r.counter_account)}</td><td>${esc(r.counter_name)}</td><td title="${esc(r.memo)}">${esc(r.memo)}</td>
+      <td>${esc(r.txn_type)}</td><td title="${esc(r.merchant)}">${esc(r.merchant)}</td><td>${inst}</td>
+      <td title="${esc(r.detail)}">${esc(r.detail)}${tags}</td><td class="notecell">${noteInput(r.id, r.note)}</td><td class="num ${r.balance<0?'neg':''}">${r.balance==null?'':won(r.balance)}</td></tr>`;
+  }).join('');
+  document.querySelectorAll('.paylink').forEach(b => b.onclick = () => openCard(b.dataset.id));
+  bindNotes($('#rows'));
+}
+
+// ---------- 사용자 메모 (입력 후 Enter 또는 다른 곳 클릭 시 저장)
+const noteInput = (id, v) => `<input class="note" data-id="${id}" value="${esc(v||'')}" data-orig="${esc(v||'')}" placeholder="메모 입력" title="${esc(v||'')}">`;
+function bindNotes(root){
+  root.querySelectorAll('input.note').forEach(inp => {
+    const save = async () => {
+      if (inp.value === inp.dataset.orig) return;
+      await api('/api/note', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:+inp.dataset.id, note:inp.value})});
+      inp.dataset.orig = inp.value; inp.title = inp.value;
+      inp.classList.add('saved'); setTimeout(() => inp.classList.remove('saved'), 900);
+    };
+    inp.onblur = save;
+    inp.onkeydown = e => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape'){ inp.value = inp.dataset.orig; inp.blur(); } };
+  });
+}
+
+async function openCard(id){
+  const d = await api('/api/statement?txn_id=' + id);
+  const p = d.payment, s = d.statement;
+  $('#cardTitle').textContent = `${p.company} 결제 상세`;
+  let info = `<span>출금일 <b>${p.date} ${p.time||''}</b></span><span>출금액 <b>${wonU(p.amount)}</b></span>`;
+  if (s) info += `<span>명세서 <b>${s.bill_month}</b> (${s.exact?'명세서 자료':'승인내역으로 추정'})</span><span>명세서 합계 <b>${wonU(s.total)}</b></span>`;
+  else if (d.missing) info += `<span class="neg"><b>${esc(d.missing.company)} ${esc(d.missing.bill_month)} 청구분 명세서가 없습니다</b> (입력된 마지막 명세서: ${esc(d.missing.last_month||'없음')}). ${esc(d.missing.help)}${d.items.length?' 아래는 전월 사용분 참고용입니다.':''}</span>`;
+  if (s && s.total !== p.amount) info += `<span class="neg">출금액과 명세서 합계 차이 ${wonU(p.amount - s.total)}</span>`;
+  $('#cardInfo').innerHTML = info;
+  $('#cardRows').innerHTML = d.items.map(i => `<tr><td>${i.date}</td><td>${esc(i.time||'')}</td><td>${esc(i.card)}</td>
+      <td title="${esc(i.merchant)}">${esc(i.merchant)}</td><td class="num">${won(i.amount)}</td>
+      <td>${i.inst_months?`${i.inst_months}개월 / ${i.inst_round||'?'}회차 / ${i.inst_remain==null?'?':i.inst_remain+'개월 남음'}`:''}</td>
+      <td class="num">${i.billed==null?'':won(i.billed)}</td><td>${esc(i.txn_type)}</td><td>${esc(i.status)} ${esc(i.detail)}</td><td class="notecell">${noteInput(i.id, i.note)}</td></tr>`).join('')
+    || `<tr><td colspan="10" class="empty">사용내역 자료가 없습니다. 오른쪽 위 ‘데이터 입력’으로 ${esc(p.company)} 명세서를 넣으면 여기에 표시됩니다.</td></tr>`;
+  bindNotes($('#cardRows'));
+  $('#dlgCard').showModal();
+}
+
+// ---------- 데이터 입력
+let pending = [];
+function setFiles(list){ pending = [...list]; $('#impResult').innerHTML = pending.map(f => `<div>${esc(f.name)}</div>`).join(''); }
+$('#files').onchange = e => setFiles(e.target.files);
+const drop = $('#drop');
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); setFiles(e.dataTransfer.files); };
+$('#impGo').onclick = async () => {
+  if (!pending.length) return;
+  const fd = new FormData(); pending.forEach(f => fd.append('files', f));
+  fd.append('account', $('#impAccount').value); fd.append('password', $('#impPw').value);
+  $('#impResult').innerHTML = '<div>가져오는 중…</div>';
+  const d = await api('/api/import', {method:'POST', body:fd});
+  $('#impResult').innerHTML = d.results.map(r => {
+    const cls = r.status==='ok'?'st-ok':(r.status==='skip'?'st-skip':'st-err');
+    const hint = r.status==='need_account' ? ' → 위에서 계좌를 지정하고 다시 가져오기' : r.status==='need_password' ? ' → PDF 암호를 입력하고 다시 가져오기' : '';
+    return `<div class="${cls}"><b>${esc(r.file)}</b> — ${esc(r.message)}${hint}</div>`; }).join('');
+  pending = pending.filter((f,i) => d.results[i] && d.results[i].status.startsWith('need'));
+  loadOverview(); loadRows();
+};
+
+// ---------- 소스
+async function openSources(){
+  const d = await api('/api/sources');
+  const acc = k => d.accounts.filter(a => a.kind===k).map(a => `<tr><td>${esc(a.institution)}</td><td><b>${esc(a.number)}</b></td><td>${esc(a.name)}</td>
+     <td>${esc(a.holder||'')}</td><td class="num">${a.n}</td><td>${a.first||''} ~ ${a.last||''}</td>
+     ${k==='bank'?`<td><label><input type="checkbox" data-own="${a.id}" ${a.owned?'checked':''}> 내 계좌</label></td>`:''}</tr>`).join('');
+  const cand = d.candidates.map(c => `<tr><td>${esc(c.counter_bank)}</td><td><b>${esc(c.counter_account)}</b></td><td>${esc(c.counter_name)}</td>
+     <td class="num">${c.n}</td><td><button data-add="${esc(c.counter_account)}" data-bank="${esc(c.counter_bank)}">내 계좌로 추가</button></td></tr>`).join('');
+  $('#srcBody').innerHTML = `
+    <div class="section-title">보유 계좌 (체크된 계좌끼리의 거래는 '내 계좌 간 이체'로 분류)</div>
+    <table><thead><tr><th>은행</th><th>계좌번호</th><th>이름</th><th>예금주</th><th class="num">거래수</th><th>기간</th><th></th></tr></thead><tbody>${acc('bank')}</tbody></table>
+    <div class="form-row"><input id="newNo" placeholder="계좌번호 (예: 증권·다른 은행 계좌)"><input id="newBank" placeholder="은행/기관"><button id="newAdd">내 계좌 추가</button></div>
+    <div class="section-title">보유 카드</div>
+    <table><thead><tr><th>카드사</th><th>카드번호</th><th>이름</th><th>예금주</th><th class="num">거래수</th><th>기간</th></tr></thead><tbody>${acc('card')}</tbody></table>
+    ${cand ? `<div class="section-title">본인 명의로 보이는 상대계좌 (추가하면 그 계좌와의 이체도 지출/수입에서 제외)</div>
+    <table><thead><tr><th>은행</th><th>계좌번호</th><th>예금주</th><th class="num">거래수</th><th></th></tr></thead><tbody>${cand}</tbody></table>` : ''}
+    <div class="section-title">입력된 파일</div>
+    <table><thead><tr><th>파일</th><th>양식</th><th>입력 시각</th><th class="num">행</th><th class="num">추가</th></tr></thead><tbody>
+    ${d.files.map(f => `<tr><td title="${esc(f.filename)}">${esc(f.filename)}</td><td>${esc(f.parser)}</td><td>${f.imported_at}</td><td class="num">${f.n_rows}</td><td class="num">${f.n_new}</td></tr>`).join('')}
+    </tbody></table>`;
+  const refresh = () => { openSources(); loadOverview(); loadRows(); };
+  document.querySelectorAll('[data-own]').forEach(c => c.onchange = async () => {
+    await api('/api/sources/owned', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id:+c.dataset.own, owned:c.checked})}); refresh(); });
+  document.querySelectorAll('[data-add]').forEach(b => b.onclick = async () => {
+    await api('/api/sources/account', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({number:b.dataset.add, institution:b.dataset.bank})}); refresh(); });
+  $('#newAdd').onclick = async () => {
+    const r = await api('/api/sources/account', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({number:$('#newNo').value, institution:$('#newBank').value})});
+    if (r.ok === false) alert(r.message); else refresh(); };
+  if (!$('#dlgSources').open) $('#dlgSources').showModal();
+}
+
+// ---------- 이벤트
+function setView(v){ state.view = v; document.querySelectorAll('#view button').forEach(b => b.classList.toggle('on', b.dataset.v===v)); }
+document.querySelectorAll('#view button').forEach(b => b.onclick = () => { setView(b.dataset.v); loadRows(); });
+$('#month').onchange = e => { state.month = e.target.value; loadOverview(); loadRows(); };
+const shift = d => { const i = state.months.indexOf(state.month) - d; if (i>=0 && i<state.months.length){ state.month = state.months[i]; loadOverview(); loadRows(); } };
+$('#prevM').onclick = () => shift(-1); $('#nextM').onclick = () => shift(1);
+$('#account').onchange = e => { state.account = e.target.value; loadOverview(); loadRows(); };
+$('#internal').onchange = e => { state.internal = e.target.checked; loadRows(); };
+let qt; $('#q').oninput = e => { clearTimeout(qt); qt = setTimeout(() => { state.q = e.target.value; loadRows(); }, 250); };
+$('#btnImport').onclick = () => $('#dlgImport').showModal();
+$('#btnSources').onclick = openSources;
+$('#btnReport').onclick = () => window.open('/report?month=' + state.month + (state.internal ? '&internal=1' : ''), '_blank');
+$('#dlgCard').addEventListener('close', loadRows);  // 상세 창에서 적은 메모를 목록에도 반영
+document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.closest('dialog').close());
+window.onresize = () => { clearTimeout(window._rt); window._rt = setTimeout(loadOverview, 200); };
+loadOverview().then(loadRows);
+</script>
+</body>
+</html>

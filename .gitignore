@@ -1,0 +1,6 @@
+# 개인 금융 데이터는 저장소에 올리지 않음
+data/
+*.db
+config.json
+__pycache__/
+*.pyc
