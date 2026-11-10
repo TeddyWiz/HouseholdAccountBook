@@ -6,6 +6,7 @@ from .config import CARD_STATEMENT_HELP, load_config
 from .db import DB
 from .importer import Importer
 from .parsers import NeedInput
+from .recurring import Recurring, base_key
 from .util import digits
 
 _service = None
@@ -64,6 +65,39 @@ class Service:
                         "name": a["name"], "balance": bal, "as_of": (at or "")[:16]})
         return out
 
+    def month_end_balances(self, month):
+        """선택한 달의 마지막 잔액: {계좌id: {balance, as_of}}, 총합, 월말 날짜"""
+        import calendar
+        if not month:
+            return {}, None, None
+        y, m = int(month[:4]), int(month[5:7])
+        end = f"{month}-{calendar.monthrange(y, m)[1]:02d}"
+        bals = self.balances(as_of=end)
+        return {b["id"]: {"balance": b["balance"], "as_of": b["as_of"]} for b in bals}, self.balance_total(bals), end
+
+    def interest_summary(self, month):
+        """선택한 달의 이자: 통장 거래 중 거래구분 또는 상세내역에 '이자'가 있는 거래
+        낸 이자(출금: 대출이자·대월결산이자 등)와 받은 이자(입금: 예금이자 등)를 나눠 합계, 계좌별 합계"""
+        if not month:
+            return None
+        rows = self.db.q("SELECT t.account_id, t.date, t.time, t.out_amt, t.in_amt, t.txn_type, t.description, "
+                         "a.number, a.name, a.institution FROM txns t JOIN accounts a ON a.id=t.account_id "
+                         "WHERE t.kind='bank' AND substr(t.date,1,7)=? AND (t.txn_type LIKE '%이자%' OR t.description LIKE '%이자%') "
+                         "ORDER BY a.institution, a.number, t.date", (month,))
+        by = {}
+        for r in rows:
+            b = by.setdefault(r["account_id"], {"id": r["account_id"], "number": r["number"], "name": r["name"],
+                                                "institution": r["institution"], "paid": 0, "received": 0, "count": 0})
+            b["paid"] += r["out_amt"] or 0
+            b["received"] += r["in_amt"] or 0
+            b["count"] += 1
+        paid = sum(b["paid"] for b in by.values())
+        received = sum(b["received"] for b in by.values())
+        return {"month": month, "paid": paid, "received": received, "net": received - paid, "count": len(rows),
+                "by_account": list(by.values()),
+                "items": [{"date": r["date"], "time": r["time"], "account": r["number"], "out": r["out_amt"],
+                           "in": r["in_amt"], "txn_type": r["txn_type"], "description": r["description"]} for r in rows]}
+
     @staticmethod
     def balance_total(balances):
         return sum(b["balance"] for b in balances)
@@ -102,7 +136,7 @@ class Service:
                       key=lambda r: (r["date"], r["time"], r["id"]))
         return {"month": month, "month_end": month_end, "summary": self.summary(month),
                 "balances": bals, "balance_total": self.balance_total(bals),
-                "bank": bank, "cards": card_groups, "bills": bills}
+                "bank": bank, "cards": card_groups, "bills": bills, "interest": self.interest_summary(month)}
 
     # ------------------------------------------------------------ 거래 목록
     def transactions(self, month=None, view="bank", show_internal=False, account_id=None, q=""):
@@ -125,7 +159,16 @@ class Service:
                     " OR t.counter_account LIKE ? OR t.txn_type LIKE ? OR t.user_note LIKE ?)")
             args += [f"%{q}%"] * 7
         sql += " ORDER BY t.date DESC, t.time DESC, t.id ASC"
-        return [self._row(r) for r in self.db.q(sql, args)]
+        rc = Recurring(self.db)
+        out = []
+        for r in self.db.q(sql, args):
+            row = self._row(r)
+            rec, same, mode, _ = rc.judge(r)
+            row["recurring"] = rec          # 반복 거래(메모 공유) — 자동 판단 또는 직접 지정
+            row["same_prev"] = same         # 반복 거래이면서 전달에도 같은 거래가 있음
+            row["recurring_mode"] = mode    # 'on' 직접 지정 / 'off' 직접 제외 / None 자동
+            out.append(row)
+        return out
 
     @staticmethod
     def _row(r):
@@ -168,8 +211,61 @@ class Service:
         }
 
     # ------------------------------------------------------------ 사용자 메모
+    def _group_ids(self, t, k):
+        return [x["id"] for x in self.db.q("SELECT * FROM txns WHERE account_id=? AND kind=?", (t["account_id"], t["kind"]))
+                if base_key(x) == k]
+
     def set_note(self, txn_id, note):
-        self.db.x("UPDATE txns SET user_note=? WHERE id=?", ((note or "").strip(), int(txn_id)))
+        """메모 저장. 반복 거래(자동 판단 또는 직접 지정)면 묶음 전체와 앞으로 들어올 같은 거래에 공유.
+        돌려주는 값: 메모가 적용된 거래 수"""
+        note = (note or "").strip()
+        t = self.db.one("SELECT * FROM txns WHERE id=?", (int(txn_id),))
+        if not t:
+            return 0
+        rec, _, _, k = Recurring(self.db).judge(t)
+        if rec:
+            ids = self._group_ids(t, k)
+            self.db.x("INSERT INTO shared_notes(rkey, note) VALUES (?,?) ON CONFLICT(rkey) DO UPDATE SET note=excluded.note",
+                      (k, note))
+            self.db.x("UPDATE txns SET user_note=? WHERE id IN (%s)" % ",".join(map(str, ids)), (note,))
+            n = len(ids)
+        else:
+            self.db.x("UPDATE txns SET user_note=? WHERE id=?", (note, int(txn_id)))
+            n = 1
+        self.db.commit()
+        return n
+
+    # ------------------------------------------------------------ 반복 거래 직접 지정
+    def set_recurring(self, txn_id, mode):
+        """mode: 'on' 반복 거래로 지정 / 'off' 반복 거래에서 제외 / 'auto' 자동 판단으로 되돌리기
+        돌려주는 값: 같은 묶음의 거래 수"""
+        t = self.db.one("SELECT * FROM txns WHERE id=?", (int(txn_id),))
+        if not t:
+            return 0
+        k = base_key(t)
+        ids = self._group_ids(t, k)
+        if mode == "auto":
+            self.db.x("DELETE FROM recurring_overrides WHERE rkey=?", (k,))
+        else:
+            acc = self.db.one("SELECT number, name FROM accounts WHERE id=?", (t["account_id"],)) or {}
+            amt = t["amount"] if t["kind"] == "card" else (t["out_amt"] or t["in_amt"])
+            what = t["merchant"] if t["kind"] == "card" else t["description"]
+            label = f"{acc.get('number') or acc.get('name', '')} · {amt:,}원 · {what}"
+            self.db.x("INSERT INTO recurring_overrides(rkey, mode, label, updated) VALUES (?,?,?,datetime('now','localtime')) "
+                      "ON CONFLICT(rkey) DO UPDATE SET mode=excluded.mode, label=excluded.label, updated=excluded.updated",
+                      (k, mode, label))
+        if mode == "off":
+            self.db.x("DELETE FROM shared_notes WHERE rkey=?", (k,))   # 앞으로 들어올 거래에 메모를 붙이지 않음
+        self.db.commit()
+        if mode == "on" and (t["user_note"] or ""):
+            self.set_note(t["id"], t["user_note"])   # 지정한 거래의 메모를 묶음 전체에 공유
+        return len(ids)
+
+    def recurring_overrides(self):
+        return self.db.q("SELECT rkey, mode, label, updated FROM recurring_overrides ORDER BY updated DESC")
+
+    def clear_override(self, rkey_):
+        self.db.x("DELETE FROM recurring_overrides WHERE rkey=?", (rkey_,))
         self.db.commit()
 
     # ------------------------------------------------------------ 카드 상세
@@ -223,7 +319,8 @@ class Service:
         accs = self.db.q("SELECT a.*, COUNT(t.id) n, MIN(t.date) first, MAX(t.date) last FROM accounts a "
                          "LEFT JOIN txns t ON t.account_id=a.id GROUP BY a.id ORDER BY a.kind, a.institution, a.number")
         files = self.db.q("SELECT filename, parser, imported_at, n_rows, n_new FROM sources ORDER BY imported_at DESC, id DESC")
-        return {"accounts": accs, "files": files, "candidates": self.self_transfer_candidates()}
+        return {"accounts": accs, "files": files, "candidates": self.self_transfer_candidates(),
+                "overrides": self.recurring_overrides()}
 
     def self_transfer_candidates(self):
         """예금주가 본인(내 계좌의 예금주)인데 아직 등록되지 않은 상대계좌 → '내 계좌 추가' 후보"""

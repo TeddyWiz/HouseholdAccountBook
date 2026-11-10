@@ -7,6 +7,7 @@ from datetime import datetime
 
 from .config import CARD_PAYMENT_RULES, load_config
 from .parsers import NeedInput, choose_parser, parse_file, parser_label
+from .recurring import rkey
 from .util import digits
 
 SUPPORTED_EXT = (".xls", ".xlsx", ".html", ".htm", ".pdf")
@@ -121,6 +122,8 @@ class Importer:
                           (name, path, sha, res.parser, datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                            len(res.txns), 0))
             # (계좌, 키)별로 묶어서 '파일 안 건수 - DB 건수' 만큼만 추가 → 같은 날 같은 금액 2건도 보존
+            self._shared = {r["rkey"]: r["note"] for r in db.q("SELECT rkey, note FROM shared_notes") if r["note"]}
+            self._overrides = {r["rkey"]: r["mode"] for r in db.q("SELECT rkey, mode FROM recurring_overrides")}
             groups = defaultdict(list)
             for i, t in enumerate(res.txns):
                 aid = acct_ids.get(t.get("acct")) if t.get("acct") else fixed_acct
@@ -157,7 +160,12 @@ class Importer:
         vals = dict(t, account_id=aid, dkey=key, source_id=src_id)
         row = [vals.get(c, "" if c not in ("out_amt", "in_amt", "amount", "inst_months", "inst_round",
                                             "inst_remain_amt", "balance") else 0) for c in cols]
-        return self.db.x(f"INSERT INTO txns({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", row)
+        tid = self.db.x(f"INSERT INTO txns({','.join(cols)}) VALUES ({','.join('?' * len(cols))})", row)
+        k = rkey(vals, getattr(self, "_overrides", {}))
+        note = getattr(self, "_shared", {}).get(k) if k else None
+        if note:  # 반복 거래에 공유된 메모가 있으면 새 거래에도 적용
+            self.db.x("UPDATE txns SET user_note=? WHERE id=?", (note, tid))
+        return tid
 
     def _merge(self, old, t):
         """이미 있는 거래: 비어 있는 정보만 보강 (예: 승인내역의 시간, 할부 최신 회차)"""

@@ -68,7 +68,7 @@ async function load() {
       <td class="d">${r.date.slice(5)} ${esc(r.time.slice(0,5))}</td><td class="d">${esc(r.account)}</td>
       <td class="n">${r.out ? won(r.out) : ''}</td><td class="n in">${r.in ? won(r.in) : (!r.out ? '<span class="hint2">0</span>' : '')}</td>
       <td>${esc(r.counter_name)}</td><td>${esc(r.txn_type)}</td>
-      <td>${esc(r.detail)}${r.internal ? ' [내부이체]' : ''}${r.card_company ? ` [${esc(r.card_company)} 결제]` : ''}${r.memo ? ' · ' + esc(r.memo) : ''}</td>
+      <td>${esc(r.detail)}${r.same_prev ? ' [전달 동일]' : ''}${r.internal ? ' [내부이체]' : ''}${r.card_company ? ` [${esc(r.card_company)} 결제]` : ''}${r.memo ? ' · ' + esc(r.memo) : ''}</td>
       <td class="memo">${esc(r.note)}</td><td class="n ${r.balance < 0 ? 'neg' : ''}">${won(r.balance)}</td></tr>`).join('');
   const outSum = d.bank.reduce((a, r) => a + (r.out || 0), 0), inSum = d.bank.reduce((a, r) => a + (r.in || 0), 0);
   // 청구금액: 첫 청구 금액 + 청구월, 할부는 알려진 회차별 청구를 함께
@@ -92,7 +92,7 @@ async function load() {
       <td class="n ${r.out < 0 ? 'neg' : ''}">${won(r.out)}</td>
       <td>${r.inst_months ? `${r.inst_months}개월${r.inst_remain != null ? ` / ${r.inst_remain}개월 남음` : ''}` : ''}</td>
       <td class="n">${ba}</td><td class="d">${bm}</td>
-      <td>${esc(r.txn_type)}${r.status ? ' ' + esc(r.status) : ''}</td><td class="memo">${esc(r.note)}</td></tr>`; }).join('')}
+      <td>${esc(r.txn_type)}${r.status ? ' ' + esc(r.status) : ''}${r.same_prev ? ' · 전달 동일' : ''}</td><td class="memo">${esc(r.note)}</td></tr>`; }).join('')}
     <tr class="sum"><td colspan="2">소계</td><td class="n">${won(g.total)}</td><td></td><td class="n">${won(g.billed_total)}</td><td colspan="3"></td></tr></tbody></table>`).join('')
     || '<div class="empty">이 달의 카드 사용내역이 없습니다.</div>');
   $('#sheet').innerHTML = `
@@ -111,6 +111,11 @@ async function load() {
         <td class="n ${b.balance < 0 ? 'neg' : ''}">${won(b.balance)}</td></tr>`).join('')}
       <tr class="sum"><td colspan="4">총합 (마이너스 통장 포함)</td><td class="n ${d.balance_total < 0 ? 'neg' : ''}">${won(d.balance_total)}</td></tr>
     </tbody></table>
+    ${d.interest ? `<h2>이자 (${d.interest.count}건)</h2>
+    <table><thead><tr><th>계좌</th><th class="n">낸 이자</th><th class="n">받은 이자</th></tr></thead><tbody>
+      ${d.interest.by_account.map(a => `<tr><td>${esc(a.institution)} ${esc(a.number)}</td><td class="n">${a.paid ? won(a.paid) : ''}</td><td class="n">${a.received ? won(a.received) : ''}</td></tr>`).join('')}
+      <tr class="sum"><td>합계 (받은 이자 − 낸 이자 = ${won(d.interest.net)}원)</td><td class="n">${won(d.interest.paid)}</td><td class="n">${won(d.interest.received)}</td></tr>
+    </tbody></table>` : ''}
     <h2>통장 거래내역 (${d.bank.length}건${$('#internal').checked ? ', 내 계좌 간 이체 포함' : ', 내 계좌 간 이체 제외'})</h2>
     ${d.bank.length ? `<table><thead><tr><th>날짜</th><th>계좌</th><th class="n">지출</th><th class="n">입금</th><th>상대 예금주</th><th>거래구분</th><th>상세내역</th><th>메모</th><th class="n">잔액</th></tr></thead>
       <tbody>${bankRows}<tr class="sum"><td colspan="2">합계</td><td class="n">${won(outSum)}</td><td class="n">${won(inSum)}</td><td colspan="5"></td></tr></tbody></table>` : '<div class="empty">거래 없음</div>'}

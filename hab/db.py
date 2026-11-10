@@ -49,6 +49,16 @@ CREATE TABLE IF NOT EXISTS statements (
     total INTEGER, exact INTEGER DEFAULT 0,
     UNIQUE(company, bill_month)
 );
+CREATE TABLE IF NOT EXISTS recurring_overrides (
+    rkey TEXT PRIMARY KEY,             -- 반복 거래 묶음 키
+    mode TEXT NOT NULL,                -- on: 반복 거래로 지정 / off: 반복 거래에서 제외
+    label TEXT DEFAULT '',             -- 화면 표시용 (계좌 · 금액 · 상세내역)
+    updated TEXT
+);
+CREATE TABLE IF NOT EXISTS shared_notes (
+    rkey TEXT PRIMARY KEY,             -- 반복 거래 키(계좌|금액|상세내역), hab/recurring.py
+    note TEXT DEFAULT ''
+);
 CREATE TABLE IF NOT EXISTS statement_items (
     statement_id INTEGER NOT NULL, txn_id INTEGER NOT NULL,
     billed INTEGER, round INTEGER DEFAULT 0,

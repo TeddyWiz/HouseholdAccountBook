@@ -14,7 +14,7 @@ from hab.service import get_service
 COLS = [("date", "날짜", 86), ("time", "시간", 66), ("account", "계좌/카드번호", 140), ("out", "지출금액", 95),
         ("in", "입금금액", 95), ("counter_account", "상대계좌번호", 130), ("counter_name", "상대계좌예금주명", 120),
         ("memo", "송금메세지", 110), ("txn_type", "거래구분", 80),
-        ("detail", "상세내역", 260), ("note", "메모(직접 입력)", 170),
+        ("detail", "상세내역", 260), ("rec", "반복", 46), ("note", "메모(반복 거래는 공유)", 170),
         ("balance", "잔액", 105)]
 NUM_COLS = {"out", "in", "balance"}
 
@@ -89,6 +89,8 @@ class App(tk.Tk):
         ttk.Label(self, text="  계좌별 잔액 (클릭하면 해당 계좌만 보기)", style="Cap.TLabel").pack(anchor="w", padx=12, pady=(6, 0))
         self.bal_frame = ttk.Frame(self, padding=(12, 2))
         self.bal_frame.pack(fill="x")
+        self.int_frame = ttk.Frame(self, padding=(12, 2))   # 선택한 달의 이자 총합
+        self.int_frame.pack(fill="x")
 
         # 필터
         flt = ttk.Frame(self, padding=(12, 8))
@@ -104,7 +106,7 @@ class App(tk.Tk):
         ttk.Button(flt, text="전체 계좌", command=self.clear_account).pack(side="left", padx=6)
         self.lbl_count = ttk.Label(flt, text="", style="Cap.TLabel")
         self.lbl_count.pack(side="left", padx=8)
-        ttk.Label(flt, text="※ '메모' 칸 더블클릭 = 메모 입력 · 파란 '카드결제' 행 더블클릭 = 카드 사용내역",
+        ttk.Label(flt, text="※ 메모 칸 더블클릭 = 메모 입력 · 카드결제 행 더블클릭 = 카드 사용내역 · 오른쪽 클릭 = 반복 거래 지정",
                   style="Cap.TLabel").pack(side="right")
 
         # 거래 표
@@ -127,6 +129,7 @@ class App(tk.Tk):
         self.tree.tag_configure("card", background="#f3f2ee")
         self.tree.tag_configure("income", foreground="#1c5cab")
         self.tree.bind("<Double-1>", self.on_double)
+        self.tree.bind("<Button-3>", self.on_right_click)   # 오른쪽 클릭: 반복 거래 지정/제외
 
     # ------------------------------------------------------------ 데이터 표시
     def refresh(self):
@@ -148,6 +151,8 @@ class App(tk.Tk):
             self.tiles["card"][1].configure(text=f"{s['card_count']}건 · 참고용")
         for w in self.bal_frame.winfo_children():
             w.destroy()
+        month_bal, month_total, _ = self.svc.month_end_balances(self.month.get())
+        mlabel = f"{int(self.month.get()[5:7])}월 말" if self.month.get() else ""
         for b in self.svc.balances():
             f = tk.Frame(self.bal_frame, bd=1, relief="solid", padx=10, pady=6, cursor="hand2",
                          bg="#e8f0fb" if self.account == b["id"] else "#fcfcfb")
@@ -156,9 +161,13 @@ class App(tk.Tk):
             l2 = tk.Label(f, text=f"{won(b['balance'])}원", bg=f["bg"], font=("Malgun Gothic", 13, "bold"),
                           fg="#d03b3b" if b["balance"] < 0 else "#0b0b0b")
             l3 = tk.Label(f, text=f"{b['as_of']} 기준", fg="#8a8984", bg=f["bg"], font=("Malgun Gothic", 8))
-            for w in (f, l1, l2, l3):
+            mb = month_bal.get(b["id"])
+            l4 = tk.Label(f, text=f"{mlabel} {won(mb['balance'])}원" if mb else f"{mlabel} 자료 없음", bg=f["bg"],
+                          font=("Malgun Gothic", 10, "bold"),
+                          fg="#d03b3b" if mb and mb["balance"] < 0 else ("#52514e" if mb else "#8a8984"))
+            for w in (f, l1, l2, l3, l4):
                 w.bind("<Button-1>", lambda e, i=b["id"]: self.pick_account(i))
-            l1.pack(anchor="w"), l2.pack(anchor="w"), l3.pack(anchor="w")
+            l1.pack(anchor="w"), l2.pack(anchor="w"), l3.pack(anchor="w"), l4.pack(anchor="w", pady=(4, 0))
         bals = self.svc.balances()
         if bals:
             total = self.svc.balance_total(bals)
@@ -169,7 +178,45 @@ class App(tk.Tk):
             tk.Label(f, text=f"{won(total)}원", bg=f["bg"], font=("Malgun Gothic", 14, "bold"),
                      fg="#d03b3b" if total < 0 else "#0b0b0b").pack(anchor="w")
             tk.Label(f, text="마이너스 통장 포함", fg="#8a8984", bg=f["bg"], font=("Malgun Gothic", 8)).pack(anchor="w")
+            if month_total is not None:
+                tk.Label(f, text=f"{mlabel} 총합 {won(month_total)}원", bg=f["bg"], font=("Malgun Gothic", 10, "bold"),
+                         fg="#d03b3b" if month_total < 0 else "#52514e").pack(anchor="w", pady=(4, 0))
+        self.show_interest()
         self.load_rows()
+
+    def show_interest(self):
+        """계좌별 잔액 아래: 선택한 달의 이자 총합(낸 이자 / 받은 이자)과 계좌별 금액. 누르면 이자 거래만 보기"""
+        for w in self.int_frame.winfo_children():
+            w.destroy()
+        it = self.svc.interest_summary(self.month.get())
+        if not it:
+            return
+        m = int(self.month.get()[5:7])
+        f = tk.Frame(self.int_frame, bd=1, relief="solid", padx=10, pady=4, bg="#efeeea", cursor="hand2")
+        f.pack(side="left", padx=4)
+        lab = tk.Label(f, bg=f["bg"], font=("Malgun Gothic", 10), justify="left",
+                       text=f"{m}월 이자 총합 ({it['count']}건)\n낸 이자 {won(it['paid'])}원 · 받은 이자 {won(it['received'])}원 · "
+                            f"합계 {'+' if it['net'] > 0 else ''}{won(it['net'])}원")
+        lab.pack(anchor="w")
+
+        def only_interest(_=None):
+            self.q.set("이자")
+            self.view.set("bank")
+            self.load_rows()
+        for w in (f, lab):
+            w.bind("<Button-1>", only_interest)
+        for a in it["by_account"]:
+            if not (a["paid"] or a["received"]):
+                continue
+            parts = []
+            if a["paid"]:
+                parts.append(f"낸 이자 {won(a['paid'])}원")
+            if a["received"]:
+                parts.append(f"받은 이자 {won(a['received'])}원")
+            g = tk.Frame(self.int_frame, bd=1, relief="solid", padx=8, pady=4, bg="#fcfcfb")
+            g.pack(side="left", padx=4)
+            tk.Label(g, bg=g["bg"], font=("Malgun Gothic", 9), justify="left", fg="#52514e",
+                     text=f"{a['institution']} {a['number']}\n" + " · ".join(parts)).pack(anchor="w")
 
     def load_rows(self):
         self.tree.delete(*self.tree.get_children())
@@ -185,6 +232,8 @@ class App(tk.Tk):
             if r["kind"] == "card":
                 # 메인 표에는 이용가맹점·할부 칸이 없으므로 카드 행은 상세내역에 함께 표시
                 detail = " · ".join(x for x in (r["merchant"], inst, r["detail"]) if x)
+            if r.get("same_prev"):
+                detail += " [전달 동일]"
             if r["internal"]:
                 detail += " [내부이체]"
             if r["card_company"]:
@@ -192,7 +241,8 @@ class App(tk.Tk):
             acc = ("💳 " if r["kind"] == "card" else "") + (r["account"] or "")
             vals = [r["date"], r["time"], acc, won(r["out"]) if r["out"] else "", won(r["in"]) if r["in"] else ("0" if not r["out"] and r["kind"] == "bank" else ""),
                     r["counter_account"], r["counter_name"], r["memo"], r["txn_type"],
-                    detail, r["note"], "" if r["balance"] is None else won(r["balance"])]
+                    detail, ("★" if r.get("recurring") else "") + ("지정" if r.get("recurring_mode") == "on" else ("제외" if r.get("recurring_mode") == "off" else "")),
+                    r["note"], "" if r["balance"] is None else won(r["balance"])]
             tags = []
             if r["internal"]:
                 tags.append("internal")
@@ -247,10 +297,14 @@ class App(tk.Tk):
             val = ent.get().strip()
             ent.destroy()
             if val != (current or ""):
-                self.svc.set_note(txn_id, val)
+                n = self.svc.set_note(txn_id, val)
                 tree.set(iid, col, val)
                 if on_saved:
                     on_saved()
+                if n > 1:  # 반복 거래 묶음 전체에 적용됨 → 목록 새로 그림
+                    self.load_rows()
+                    self.title(f"가계부 — 반복 거래 {n}건에 메모를 함께 적용했습니다")
+                    self.after(3000, lambda: self.title("가계부"))
 
         def cancel(_=None):
             done["v"] = True
@@ -258,6 +312,31 @@ class App(tk.Tk):
         ent.bind("<Return>", save)
         ent.bind("<FocusOut>", save)
         ent.bind("<Escape>", cancel)
+
+    def on_right_click(self, ev):
+        iid = self.tree.identify_row(ev.y)
+        r = self.row_map.get(iid)
+        if not r:
+            return
+        self.tree.selection_set(iid)
+        menu = tk.Menu(self, tearoff=0)
+        state = ("직접 지정한 반복 거래" if r.get("recurring_mode") == "on" else
+                 "직접 제외한 거래" if r.get("recurring_mode") == "off" else
+                 "자동으로 찾은 반복 거래" if r.get("recurring") else "반복 거래 아님")
+        menu.add_command(label=f"현재: {state}", state="disabled")
+        menu.add_separator()
+        menu.add_command(label="★ 반복 거래로 지정 (같은 계좌·금액·상세내역, 메모 공유)",
+                         command=lambda: self.set_recurring(r, "on"))
+        menu.add_command(label="☆ 반복 거래에서 제외", command=lambda: self.set_recurring(r, "off"))
+        menu.add_command(label="자동 판단으로 되돌리기", command=lambda: self.set_recurring(r, "auto"))
+        menu.tk_popup(ev.x_root, ev.y_root)
+
+    def set_recurring(self, r, mode):
+        n = self.svc.set_recurring(r["id"], mode)
+        self.load_rows()
+        msg = {"on": "반복 거래로 지정", "off": "반복 거래에서 제외", "auto": "자동 판단으로 되돌림"}[mode]
+        self.title(f"가계부 — {msg} (같은 거래 {n}건)")
+        self.after(3000, lambda: self.title("가계부"))
 
     def on_double(self, ev):
         iid = self.tree.identify_row(ev.y)
@@ -450,6 +529,21 @@ class App(tk.Tk):
         cards = [dict(a, period=f"{a['first'] or ''} ~ {a['last'] or ''}") for a in d["accounts"] if a["kind"] == "card"]
         table(f2, [("institution", "카드사", 110), ("number", "카드번호", 200), ("name", "이름", 200),
                    ("n", "거래수", 70), ("period", "기간", 200)], cards)
+
+        f4 = ttk.Frame(nb)
+        nb.add(f4, text="반복 거래 지정")
+        ovs = [dict(o, state="★ 반복 거래로 지정" if o["mode"] == "on" else "☆ 반복 거래에서 제외") for o in d["overrides"]]
+        tvo = table(f4, [("state", "상태", 150), ("label", "거래 (계좌 · 금액 · 상세내역)", 480), ("updated", "지정 시각", 150)], ovs)
+
+        def unov():
+            for iid in tvo.selection():
+                self.svc.clear_override(ovs[tvo.index(iid)]["rkey"])
+            win.destroy()
+            self.refresh()
+            self.show_sources()
+        ttk.Button(f4, text="선택 항목을 자동 판단으로 되돌리기", command=unov).pack(anchor="w", padx=6, pady=4)
+        ttk.Label(f4, text="거래 목록에서 줄을 오른쪽 클릭하면 반복 거래로 지정하거나 제외할 수 있습니다.",
+                  style="Cap.TLabel").pack(anchor="w", padx=6)
 
         f3 = ttk.Frame(nb)
         nb.add(f3, text="입력된 파일")

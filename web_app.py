@@ -33,8 +33,11 @@ def overview():
     months = s.months()
     month = request.args.get("month") or (months[0] if months else "")
     bals = s.balances()
+    month_bal, month_total, month_end = s.month_end_balances(month)
     return jsonify(months=months, month=month, summary=s.summary(month) if month else None,
                    balances=bals, balance_total=s.balance_total(bals),
+                   month_balances={str(k): v for k, v in month_bal.items()}, month_total=month_total,
+                   month_end=month_end, interest=s.interest_summary(month),
                    trend=s.trend(12), bank_accounts=s.bank_accounts())
 
 
@@ -67,8 +70,18 @@ def statement():
 @app.post("/api/note")
 def set_note():
     d = request.get_json(force=True)
-    svc().set_note(d["id"], d.get("note", ""))
-    return jsonify(ok=True)
+    n = svc().set_note(d["id"], d.get("note", ""))
+    return jsonify(ok=True, applied=n)
+
+
+@app.post("/api/recurring")
+def set_recurring():
+    d = request.get_json(force=True)
+    if d.get("rkey"):
+        svc().clear_override(d["rkey"])
+        return jsonify(ok=True)
+    n = svc().set_recurring(d["id"], d.get("mode", "auto"))
+    return jsonify(ok=True, group=n)
 
 
 @app.get("/api/sources")
