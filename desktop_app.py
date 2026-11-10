@@ -19,6 +19,21 @@ COLS = [("date", "날짜", 86), ("time", "시간", 66), ("account", "계좌/카�
 NUM_COLS = {"out", "in", "balance"}
 
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+ICON_ICO = os.path.join(HERE, "assets", "app.ico")
+ICON_PNG = os.path.join(HERE, "assets", "app.png")
+
+
+def set_app_id():
+    """작업 표시줄에 파이썬 아이콘 대신 가계부 아이콘이 보이도록 (Windows)"""
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("HouseholdAccountBook.Desktop")
+        except Exception:
+            pass
+
+
 def won(n):
     return "" if n in (None, "") else f"{int(n):,}"
 
@@ -28,16 +43,28 @@ class App(tk.Tk):
         super().__init__()
         self.title("가계부")
         self.geometry("1500x880")
+        self._set_icon()
         self.svc = get_service()
         self.month = tk.StringVar()
         self.view = tk.StringVar(value="bank")
         self.show_internal = tk.BooleanVar(value=False)
+        self.fixed_only = tk.BooleanVar(value=False)
         self.account = None
         self.q = tk.StringVar()
         self.row_map = {}
         self._style()
         self._build()
         self.refresh()
+
+    def _set_icon(self):
+        try:
+            if os.name == "nt" and os.path.exists(ICON_ICO):
+                self.iconbitmap(default=ICON_ICO)      # 모든 창(상세, 소스 창 포함)에 적용
+            elif os.path.exists(ICON_PNG):
+                self._icon_img = tk.PhotoImage(file=ICON_PNG)
+                self.iconphoto(True, self._icon_img)
+        except Exception:
+            pass
 
     def _style(self):
         st = ttk.Style(self)
@@ -99,6 +126,8 @@ class App(tk.Tk):
             ttk.Radiobutton(flt, text=t, value=v, variable=self.view, command=self.load_rows).pack(side="left")
         ttk.Checkbutton(flt, text="내 계좌 간 이체 표시", variable=self.show_internal,
                         command=self.load_rows).pack(side="left", padx=12)
+        ttk.Checkbutton(flt, text="고정지출만", variable=self.fixed_only,
+                        command=self.on_fixed_toggle).pack(side="left", padx=(0, 12))
         ttk.Label(flt, text="검색").pack(side="left")
         e = ttk.Entry(flt, textvariable=self.q, width=26)
         e.pack(side="left", padx=4)
@@ -201,10 +230,29 @@ class App(tk.Tk):
 
         def only_interest(_=None):
             self.q.set("이자")
+            self.fixed_only.set(False)
             self.view.set("bank")
             self.load_rows()
         for w in (f, lab):
             w.bind("<Button-1>", only_interest)
+
+        # 고정지출 (반복 거래 중 나간 돈) — 이자 총합 바로 옆
+        fx = self.svc.fixed_expense_summary(self.month.get())
+        if fx:
+            g = tk.Frame(self.int_frame, bd=1, relief="solid", padx=10, pady=4, bg="#efeeea", cursor="hand2")
+            g.pack(side="left", padx=4)
+            gl = tk.Label(g, bg=g["bg"], font=("Malgun Gothic", 10), justify="left",
+                          text=f"{m}월 고정지출 ({fx['count']}건)\n합계 {won(fx['total'])}원 · 통장 {won(fx['bank'])}원 · "
+                               f"카드 {won(fx['card'])}원")
+            gl.pack(anchor="w")
+
+            def only_fixed(_=None):
+                self.fixed_only.set(True)
+                self.q.set("")
+                self.view.set("all")
+                self.load_rows()
+            for w in (g, gl):
+                w.bind("<Button-1>", only_fixed)
         for a in it["by_account"]:
             if not (a["paid"] or a["received"]):
                 continue
@@ -223,7 +271,7 @@ class App(tk.Tk):
         self.row_map.clear()
         rows = self.svc.transactions(month=self.month.get() or None, view=self.view.get(),
                                      show_internal=self.show_internal.get(), account_id=self.account,
-                                     q=self.q.get().strip())
+                                     q=self.q.get().strip(), fixed_only=self.fixed_only.get())
         for r in rows:
             inst = ""
             if r["inst_months"]:
@@ -269,6 +317,11 @@ class App(tk.Tk):
         if self.account and self.view.get() == "card":
             self.view.set("bank")
         self.refresh()
+
+    def on_fixed_toggle(self):
+        if self.fixed_only.get():
+            self.view.set("all")
+        self.load_rows()
 
     def clear_account(self):
         self.account = None
@@ -571,4 +624,5 @@ class App(tk.Tk):
 
 
 if __name__ == "__main__":
+    set_app_id()
     App().mainloop()

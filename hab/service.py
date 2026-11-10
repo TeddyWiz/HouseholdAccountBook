@@ -136,10 +136,11 @@ class Service:
                       key=lambda r: (r["date"], r["time"], r["id"]))
         return {"month": month, "month_end": month_end, "summary": self.summary(month),
                 "balances": bals, "balance_total": self.balance_total(bals),
-                "bank": bank, "cards": card_groups, "bills": bills, "interest": self.interest_summary(month)}
+                "bank": bank, "cards": card_groups, "bills": bills, "interest": self.interest_summary(month),
+                "fixed": self.fixed_expense_summary(month)}
 
     # ------------------------------------------------------------ 거래 목록
-    def transactions(self, month=None, view="bank", show_internal=False, account_id=None, q=""):
+    def transactions(self, month=None, view="bank", show_internal=False, account_id=None, q="", fixed_only=False):
         sql = ("SELECT t.*, a.number acc_number, a.name acc_name, a.institution FROM txns t "
                "JOIN accounts a ON a.id=t.account_id WHERE 1=1")
         args = []
@@ -167,8 +168,30 @@ class Service:
             row["recurring"] = rec          # 반복 거래(메모 공유) — 자동 판단 또는 직접 지정
             row["same_prev"] = same         # 반복 거래이면서 전달에도 같은 거래가 있음
             row["recurring_mode"] = mode    # 'on' 직접 지정 / 'off' 직접 제외 / None 자동
+            if fixed_only and not self.is_fixed_expense(row):
+                continue
             out.append(row)
         return out
+
+    @staticmethod
+    def is_fixed_expense(r):
+        """고정지출: 반복 거래이면서 나간 돈 (내 계좌 간 이체·통장의 카드대금 결제·취소 건 제외)"""
+        return bool(r["recurring"] and r["out"] > 0 and not r["internal"] and not r["card_company"] and not r["status"])
+
+    def fixed_expense_summary(self, month):
+        """선택한 달의 고정지출 합계: 통장(자동이체·보험료·통신비 등) + 카드(구독료 등)"""
+        if not month:
+            return None
+        rows = self.transactions(month=month, view="all", show_internal=False, fixed_only=True)
+        bank = [r for r in rows if r["kind"] == "bank"]
+        card = [r for r in rows if r["kind"] == "card"]
+        top = sorted(rows, key=lambda r: -r["out"])
+        return {"month": month, "total": sum(r["out"] for r in rows), "count": len(rows),
+                "bank": sum(r["out"] for r in bank), "bank_count": len(bank),
+                "card": sum(r["out"] for r in card), "card_count": len(card),
+                "items": [{"date": r["date"], "kind": r["kind"], "account": r["account"],
+                           "what": r["merchant"] if r["kind"] == "card" else r["detail"],
+                           "amount": r["out"], "note": r["note"]} for r in top]}
 
     @staticmethod
     def _row(r):

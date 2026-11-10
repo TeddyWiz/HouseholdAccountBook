@@ -14,6 +14,8 @@
    │  └─ parsers/              ← 양식별 파서 (새 양식은 여기에 추가)
    ├─ web/index.html           ← 웹 화면
    ├─ desktop_app.py           ← 데스크톱 앱
+   ├─ assets/app.ico           ← 앱 아이콘 (바로가기·창 아이콘)
+   ├─ make_shortcut.bat        ← 바탕화면 바로가기 만들기
    ├─ web_app.py               ← 웹 서버
    └─ import_all.py            ← DataSource 전체 일괄 입력
 ```
@@ -25,6 +27,10 @@
 3. `import_all.bat` 실행 → DataSource 폴더 전체를 DB로 가져옴 (여러 번 실행해도 중복 없음)
    - 암호 걸린 PDF 명세서(IBK 등)까지 읽으려면 암호를 뒤에 붙여 실행: `import_all.bat 900101` (명령 프롬프트에서). 암호는 저장되지 않습니다.
 4. `run_app.bat`(앱) 또는 `run_web.bat`(웹, http://localhost:5000) 실행
+5. (선택) `make_shortcut.bat` 더블클릭 → 바탕화면·시작 메뉴·이 폴더에 **가계부** 아이콘 바로가기가 생깁니다.
+   - 바로가기는 검은 명령 창 없이 앱을 바로 엽니다. 작업 표시줄에 고정하려면 바탕화면 아이콘을 오른쪽 클릭 → **작업 표시줄에 고정**.
+   - 폴더를 옮겼거나 Python을 다시 설치했다면 `make_shortcut.bat` 를 한 번 더 실행하세요.
+   - 아이콘 파일: `assets/app.ico`
 
 이후 새 자료는 앱/웹의 **데이터 입력** 버튼으로 넣으면 됩니다. 웹으로 올린 파일은 `DataSource/Bank` 또는 `DataSource/Card` 에 사본이 저장됩니다.
 
@@ -67,6 +73,7 @@
 ### 새 양식 추가 방법
 `hab/parsers/` 에 `Parser` 를 상속한 클래스를 만들고 `detect()`(이 양식인지 판별)와 `parse()`(거래 목록 반환)를 구현한 뒤,
 `hab/parsers/__init__.py` 의 `PARSERS` 목록에 넣으면 됩니다. 기존 `banks.py`, `cards.py` 가 예시입니다.
+단계별 방법·완성 예시 코드·항목표·체크리스트는 가이드 문서의 **새 양식 추가 가이드 (개발자용)** 를 참고하세요.
 
 ## 중복 처리 규칙
 

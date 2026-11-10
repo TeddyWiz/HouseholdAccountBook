@@ -1,6 +1,7 @@
 """반복 거래: 같은 계좌 + 같은 금액 + 같은 상세내역(카드는 가맹점)인 거래 묶음
 
-- 자동 판단: 같은 묶음이 2개월 이상 나타나면 반복 거래. 사람 이름 이체(예: 박병택, 김미나)는 제외.
+- 자동 판단: 같은 묶음이 2개월 이상, 대략 한 달에 한 번(평균 1.5회 이하) 나타나면 반복 거래.
+  사람 이름 이체(예: 박병택, 김미나)와 자주 사는 같은 금액 물건(커피 등)은 제외.
 - 직접 지정: 사용자가 묶음을 '반복 거래로 지정'(on) 하거나 '반복 거래에서 제외'(off) 할 수 있음
   → recurring_overrides 표. 지정은 자동 판단보다 우선합니다(사람 이름 이체도 지정 가능, 1개월만 있어도 지정 가능).
 - '전달 동일' 표시: 반복 거래인 묶음이 바로 전달에도 있으면 표시
@@ -35,6 +36,9 @@ def is_person(t):
     return bool(cname) and re.fullmatch(r"[가-힣]{2,4}", desc) is not None
 
 
+MAX_PER_MONTH = 1.5   # 자동 판단 시 한 달 평균 횟수 상한
+
+
 def base_key(t):
     """금액·계좌·상세내역으로 만든 묶음 키 (사람 이름 여부와 무관)"""
     if t["kind"] == "card":
@@ -53,10 +57,12 @@ class Recurring:
 
     def __init__(self, db):
         self.overrides = {r["rkey"]: r["mode"] for r in db.q("SELECT rkey, mode FROM recurring_overrides")}
-        self.months = {}
+        self.months, self.counts = {}, {}
         for t in db.q("SELECT account_id, kind, out_amt, in_amt, amount, description, merchant, "
                       "substr(date,1,7) m FROM txns"):
-            self.months.setdefault(base_key(t), set()).add(t["m"])
+            k = base_key(t)
+            self.months.setdefault(k, set()).add(t["m"])
+            self.counts[k] = self.counts.get(k, 0) + 1
 
     def judge(self, t):
         """→ (반복 거래 여부, 전달 동일 여부, 지정 상태 'on'|'off'|None, 키)"""
@@ -68,7 +74,9 @@ class Recurring:
         elif mode == "on":
             rec = True
         else:
-            rec = not is_person(t) and len(months) >= 2
+            # 자동 판단: 2개월 이상 + 대략 한 달에 한 번 (같은 가게 커피처럼 한 달에 여러 번이면 반복 거래 아님)
+            rec = (not is_person(t) and len(months) >= 2
+                   and self.counts.get(k, 0) <= len(months) * MAX_PER_MONTH)
         same = rec and prev_month(t["date"][:7]) in months
         return rec, same, mode, k
 

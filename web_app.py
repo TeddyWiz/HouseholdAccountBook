@@ -37,7 +37,7 @@ def overview():
     return jsonify(months=months, month=month, summary=s.summary(month) if month else None,
                    balances=bals, balance_total=s.balance_total(bals),
                    month_balances={str(k): v for k, v in month_bal.items()}, month_total=month_total,
-                   month_end=month_end, interest=s.interest_summary(month),
+                   month_end=month_end, interest=s.interest_summary(month), fixed=s.fixed_expense_summary(month),
                    trend=s.trend(12), bank_accounts=s.bank_accounts())
 
 
@@ -58,7 +58,7 @@ def transactions():
     a = request.args
     rows = svc().transactions(month=a.get("month") or None, view=a.get("view", "bank"),
                               show_internal=a.get("internal") == "1", account_id=a.get("account") or None,
-                              q=a.get("q", "").strip())
+                              q=a.get("q", "").strip(), fixed_only=a.get("fixed") == "1")
     return jsonify(rows=rows)
 
 

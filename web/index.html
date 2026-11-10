@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>가계부</title>
+<link rel="icon" type="image/png" href="/static/favicon.png">
 <style>
 :root{
   --bg:#f4f4f2; --surface:#fcfcfb; --line:#e3e2de; --ink:#0b0b0b; --ink2:#52514e; --ink3:#8a8984;
@@ -150,6 +151,7 @@ dialog::backdrop{background:rgba(0,0,0,.35)}
     </div>
     <select id="account"><option value="">모든 계좌/카드</option></select>
     <label><input type="checkbox" id="internal"> 내 계좌 간 이체 표시</label>
+    <label title="반복 거래 중 나간 돈만 보기"><input type="checkbox" id="fixedOnly"> 고정지출만</label>
     <input type="search" id="q" placeholder="검색 (내용·가맹점·예금주·메시지·메모)">
     <span class="count" id="count"></span>
   </div>
@@ -195,7 +197,7 @@ const $ = s => document.querySelector(s);
 const won = n => (n == null || n === '') ? '' : Number(n).toLocaleString('ko-KR');
 const wonU = n => won(n) + '원';
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const state = { month:'', months:[], view:'bank', account:'', internal:false, q:'' };
+const state = { month:'', months:[], view:'bank', account:'', internal:false, q:'', fixed:false };
 async function api(url, opt){ const r = await fetch(url, opt); return r.json(); }
 
 async function loadOverview(){
@@ -229,8 +231,19 @@ async function loadOverview(){
       낸 이자 <b class="${it.paid?'neg':''}">${wonU(it.paid)}</b> · 받은 이자 <b class="${it.received?'pos':''}">${wonU(it.received)}</b> · 합계 <b class="${it.net<0?'neg':''}">${it.net>0?'+':''}${wonU(it.net)}</b></div>`
     + it.by_account.filter(a => a.paid || a.received).map(a => `<div class="box">${esc(a.institution)} · ${esc(a.number)}<br>
       ${a.paid ? `낸 이자 <b class="neg">${wonU(a.paid)}</b>` : ''}${a.paid && a.received ? ' · ' : ''}${a.received ? `받은 이자 <b class="pos">${wonU(a.received)}</b>` : ''}</div>`).join('') : '';
-  const ib = document.querySelector('#interest .box.total');
-  if (ib) ib.onclick = () => { $('#q').value = '이자'; state.q = '이자'; setView('bank'); loadRows(); };
+  // 고정지출 (반복 거래 중 나간 돈) — 이자 총합 바로 옆
+  const fx = d.fixed;
+  if (fx) {
+    const top = fx.items.slice(0, 6).map(i => `${i.what} ${won(i.amount)}`).join('\n');
+    const fxHtml = `<div class="box total fixed" title="눌러서 고정지출만 보기\n${esc(top)}">${mLabel.replace(' 말','')} 고정지출 (${fx.count}건)<br>
+      합계 <b class="${fx.total?'neg':''}">${wonU(fx.total)}</b> · 통장 ${wonU(fx.bank)} · 카드 ${wonU(fx.card)}</div>`;
+    const first = document.querySelector('#interest .box.total');
+    if (first) first.insertAdjacentHTML('afterend', fxHtml); else $('#interest').insertAdjacentHTML('afterbegin', fxHtml);
+    document.querySelector('#interest .box.fixed').onclick = () => {
+      state.fixed = true; $('#fixedOnly').checked = true; state.q = ''; $('#q').value = ''; setView('all'); loadRows(); };
+  }
+  const ib = document.querySelector('#interest .box.total:not(.fixed)');
+  if (ib) ib.onclick = () => { $('#q').value = '이자'; state.q = '이자'; state.fixed = false; $('#fixedOnly').checked = false; setView('bank'); loadRows(); };
   document.querySelectorAll('.bal[data-id]').forEach(el => el.onclick = () => {
     state.account = state.account === el.dataset.id ? '' : el.dataset.id;
     if (state.account && state.view === 'card') setView('bank');
@@ -277,7 +290,7 @@ function drawChart(trend){
 }
 
 async function loadRows(){
-  const p = new URLSearchParams({month: state.month, view: state.view, internal: state.internal?'1':'0', account: state.account, q: state.q});
+  const p = new URLSearchParams({month: state.month, view: state.view, internal: state.internal?'1':'0', account: state.account, q: state.q, fixed: state.fixed?'1':'0'});
   const d = await api('/api/transactions?' + p);
   $('#count').textContent = `${d.rows.length}건`;
   if (!d.rows.length){ $('#rows').innerHTML = '<tr><td colspan="15" class="empty">이 조건에 맞는 거래가 없습니다.</td></tr>'; return; }
@@ -409,6 +422,7 @@ const shift = d => { const i = state.months.indexOf(state.month) - d; if (i>=0 &
 $('#prevM').onclick = () => shift(-1); $('#nextM').onclick = () => shift(1);
 $('#account').onchange = e => { state.account = e.target.value; loadOverview(); loadRows(); };
 $('#internal').onchange = e => { state.internal = e.target.checked; loadRows(); };
+$('#fixedOnly').onchange = e => { state.fixed = e.target.checked; if (state.fixed) setView('all'); loadRows(); };
 let qt; $('#q').oninput = e => { clearTimeout(qt); qt = setTimeout(() => { state.q = e.target.value; loadRows(); }, 250); };
 $('#btnImport').onclick = () => $('#dlgImport').showModal();
 $('#btnSources').onclick = openSources;

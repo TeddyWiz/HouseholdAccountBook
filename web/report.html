@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>가계부 월 보고서</title>
+<link rel="icon" type="image/png" href="/static/favicon.png">
 <style>
 @page { size: A4 landscape; margin: 12mm 10mm; }
 * { box-sizing: border-box; }
@@ -116,6 +117,10 @@ async function load() {
       ${d.interest.by_account.map(a => `<tr><td>${esc(a.institution)} ${esc(a.number)}</td><td class="n">${a.paid ? won(a.paid) : ''}</td><td class="n">${a.received ? won(a.received) : ''}</td></tr>`).join('')}
       <tr class="sum"><td>합계 (받은 이자 − 낸 이자 = ${won(d.interest.net)}원)</td><td class="n">${won(d.interest.paid)}</td><td class="n">${won(d.interest.received)}</td></tr>
     </tbody></table>` : ''}
+    ${d.fixed && d.fixed.count ? `<h2>고정지출 (${d.fixed.count}건, ${won(d.fixed.total)}원 · 통장 ${won(d.fixed.bank)}원 · 카드 ${won(d.fixed.card)}원)</h2>
+    <table><thead><tr><th>날짜</th><th>계좌/카드</th><th>내용</th><th class="n">금액</th><th>메모</th></tr></thead><tbody>
+      ${d.fixed.items.map(i => `<tr><td class="d">${i.date.slice(5)}</td><td class="d">${esc(i.account)}</td><td>${esc(i.what)}</td><td class="n">${won(i.amount)}</td><td class="memo">${esc(i.note)}</td></tr>`).join('')}
+      <tr class="sum"><td colspan="3">합계</td><td class="n">${won(d.fixed.total)}</td><td></td></tr></tbody></table>` : ''}
     <h2>통장 거래내역 (${d.bank.length}건${$('#internal').checked ? ', 내 계좌 간 이체 포함' : ', 내 계좌 간 이체 제외'})</h2>
     ${d.bank.length ? `<table><thead><tr><th>날짜</th><th>계좌</th><th class="n">지출</th><th class="n">입금</th><th>상대 예금주</th><th>거래구분</th><th>상세내역</th><th>메모</th><th class="n">잔액</th></tr></thead>
       <tbody>${bankRows}<tr class="sum"><td colspan="2">합계</td><td class="n">${won(outSum)}</td><td class="n">${won(inSum)}</td><td colspan="5"></td></tr></tbody></table>` : '<div class="empty">거래 없음</div>'}
