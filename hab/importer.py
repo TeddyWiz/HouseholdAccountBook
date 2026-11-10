@@ -130,9 +130,13 @@ class Importer:
                 t["_aid"] = aid
                 t["_dkey"] = dkey_of(t)
                 groups[(aid, t["_dkey"])].append(i)
-            idx_to_id, new = {}, 0
+            idx_to_id, new, used = {}, 0, set()
             for (aid, key), idxs in groups.items():
-                existing = db.q("SELECT * FROM txns WHERE account_id=? AND dkey=? ORDER BY id", (aid, key))
+                scope = self._dedup_scope(aid)
+                existing = [r for r in db.q(
+                    f"SELECT * FROM txns WHERE account_id IN ({','.join('?' * len(scope))}) AND dkey=? "
+                    "ORDER BY (account_id<>?), id", (*scope, key, aid)) if r["id"] not in used]
+                used.update(r["id"] for r in existing[:len(idxs)])
                 for n, i in enumerate(idxs):
                     t = res.txns[i]
                     if n < len(existing):
@@ -151,6 +155,67 @@ class Importer:
             msg += " / " + " ".join(res.warnings)
         return {"file": name, "status": "ok", "parser": res.parser, "kind": getattr(res, "kind", "bank"),
                 "rows": len(res.txns), "new": new, "message": msg}
+
+    def _generic_card_ids(self, institution=None):
+        """카드번호를 모르는 카드 계정(PDF에서 번호를 못 읽은 경우, key가 ':PDF'로 끝남)"""
+        sql = "SELECT id FROM accounts WHERE kind='card' AND key LIKE '%:PDF'"
+        args = ()
+        if institution is not None:
+            sql += " AND institution=?"
+            args = (institution,)
+        return {r["id"] for r in self.db.q(sql, args)}
+
+    def _dedup_scope(self, aid):
+        """중복 비교 대상 계정: 보통은 자기 계정만.
+        카드번호 없는 PDF 계정 ↔ 같은 카드사의 번호 있는 카드는 같은 거래가 들어올 수 있으므로 함께 비교"""
+        a = self.db.one("SELECT key, kind, institution FROM accounts WHERE id=?", (aid,))
+        if not a or a["kind"] != "card":
+            return [aid]
+        sib = self.db.q("SELECT id, key FROM accounts WHERE kind='card' AND institution=? AND id<>?",
+                        (a["institution"], aid))
+        if a["key"].endswith(":PDF"):
+            return [aid] + [s["id"] for s in sib]
+        return [aid] + [s["id"] for s in sib if s["key"].endswith(":PDF")]
+
+    def merge_generic_cards(self):
+        """이미 들어간 중복 정리: 카드번호 없는 PDF 계정의 거래가 같은 카드사의 번호 있는 카드 거래(같은 날짜·금액)와
+        겹치면 번호 있는 쪽 하나만 남김. 청구 정보·메모·깨지지 않은 가맹점명은 남는 거래로 옮김. → 지운 건수"""
+        db, removed = self.db, 0
+        for g in db.q("SELECT id, institution FROM accounts WHERE kind='card' AND key LIKE '%:PDF'"):
+            others = [r["id"] for r in db.q("SELECT id FROM accounts WHERE kind='card' AND institution=? "
+                                            "AND key NOT LIKE '%:PDF'", (g["institution"],))]
+            if not others:
+                continue
+            ph = ",".join("?" * len(others))
+            gen = defaultdict(list)
+            for r in db.q("SELECT * FROM txns WHERE account_id=? ORDER BY id", (g["id"],)):
+                gen[r["dkey"]].append(r)
+            for key, grows in gen.items():
+                nrows = db.q(f"SELECT * FROM txns WHERE account_id IN ({ph}) AND dkey=? ORDER BY id", (*others, key))
+                for gr, nr in zip(grows, nrows):
+                    upd = {}
+                    if gr.get("user_note") and not nr.get("user_note"):
+                        upd["user_note"] = gr["user_note"]
+                    for c in ("pay_month", "detail", "status"):
+                        if gr.get(c) and not nr.get(c):
+                            upd[c] = gr[c]
+                    if (gr.get("inst_round") or 0) > (nr.get("inst_round") or 0):
+                        upd["inst_round"], upd["inst_remain_amt"] = gr["inst_round"], gr.get("inst_remain_amt") or 0
+                    if gr.get("inst_months") and not nr.get("inst_months"):
+                        upd["inst_months"] = gr["inst_months"]
+                    if is_garbled(nr.get("merchant")) and gr.get("merchant") and not is_garbled(gr["merchant"]):
+                        upd["merchant"] = gr["merchant"]
+                    if upd:
+                        db.x(f"UPDATE txns SET {','.join(k + '=?' for k in upd)} WHERE id=?", (*upd.values(), nr["id"]))
+                    # 명세서(청구금액) 연결을 남는 거래로 옮김
+                    db.x("UPDATE OR IGNORE statement_items SET txn_id=? WHERE txn_id=?", (nr["id"], gr["id"]))
+                    db.x("DELETE FROM statement_items WHERE txn_id=?", (gr["id"],))
+                    db.x("UPDATE txns SET pair_id=NULL WHERE pair_id=?", (gr["id"],))
+                    db.x("DELETE FROM txns WHERE id=?", (gr["id"],))
+                    removed += 1
+        if removed:
+            db.commit()
+        return removed
 
     def _insert(self, t, aid, key, src_id):
         cols = ["kind", "account_id", "date", "time", "out_amt", "in_amt", "balance", "description", "memo",
@@ -216,6 +281,7 @@ class Importer:
 
     # ------------------------------------------------------------ 후처리
     def postprocess(self):
+        self.merge_generic_cards()
         self.mark_internal()
         self.link_card_payments()
 

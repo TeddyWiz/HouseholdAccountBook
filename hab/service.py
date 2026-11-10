@@ -23,6 +23,10 @@ class Service:
     def __init__(self, db_path):
         self.db = DB(db_path)
         self.importer = Importer(self.db)
+        try:   # 예전에 들어간 카드 중복(번호 없는 PDF ↔ 엑셀 명세서) 정리
+            self.importer.merge_generic_cards()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------ 기간
     def months(self):
